@@ -1,0 +1,154 @@
+
+/*
+ * Control.c
+ *
+ *  Author: Samantha Sanchez
+ *  DIMES - LOW LEVEL EMB SYS
+ */ 
+
+
+//-----------------------------------------
+#define F_CPU 16000000UL
+
+//-----------------------------------------
+//include libraries
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <util/twi.h>
+#include <inttypes.h>
+#include <math.h>
+
+//-----------------------------------------
+//include my Libraries
+//----CONTROL------
+
+#include "S_MONITOR.h"
+#include "ADC_VALUE.h"
+#include "MPU6050_REG.h"
+#include "MASTER_I2C.h"
+
+uint8_t temp=37 ,X=10, Y=10;
+volatile uint8_t rangoX, rangoY, joystX, joystY, Control;
+
+#define MANUAL 0
+#define GESTURAL 1
+#define WAITING 2
+
+void Gestual_Ctrl()
+{
+	//read variables x,y from Gyroscope
+	int16_t accelerometerX = MPU6050_ReadRawData(0x3B);
+	int16_t accelerometerY = MPU6050_ReadRawData(0x3D);
+	int16_t Temperature = MPU6050_ReadRawData(0x41);
+
+	//range setting for gyroscope variables
+	rangoX = ((accelerometerX - (-15700)) / 125)/12;
+	rangoY = ((accelerometerY - (-16000)) / 125)/12;
+	temp = ((Temperature / 340.0) + 36.53);
+	Control= GESTURAL;
+
+	// 	char buffer[50];
+	// 	sprintf(buffer, "Valor recibido: %d\n", rangoX);
+	// 	serialPrint(buffer);
+	transmitByte(rangoY);
+	transmitByte(rangoX);
+	transmitByte(temp);
+	transmitByte(Control);
+
+}
+
+void Manual_Ctrl()
+{
+	//read variables x,y from joystick
+	uint16_t joystickX = ADC_Read(0);
+	uint16_t joystickY = ADC_Read(1);
+	int16_t Temperature = MPU6050_ReadRawData(0x41);
+	
+	//range setting for joystick variables
+	joystX = (joystickX * 21) / 1023;
+	joystY = (joystickY * 21) / 1023;
+	temp = ((Temperature / 340.0) + 36.53);
+	Control= MANUAL;
+	
+	// 	 char buffer1[50];
+	// 	 sprintf(buffer1, "Movement: X=%d, Y=%d\r\n", joystX, joystY);
+	// 	 serialPrint(buffer1);
+	
+	transmitByte(joystX);
+	transmitByte(joystY);
+	transmitByte(temp);
+	transmitByte(Control);
+}
+
+void interr_init()
+{
+	// Configure external interrupt (INT0) for rising/falling edge detection
+	DDRD &= ~(1 << PD2);
+	DDRD &= ~(1 << PD3); // Set INT0 pin (PD2) as input
+	PORTD |= (1 << PD2)|(1 << PD3); // Enable pull-up resistor on INT0 pin
+	//EICRA |= (1 << ISC01) | (1 << ISC00)|(1 << ISC01) | (1 << ISC00); // Enable rising/falling edge detection on INT0
+	EIMSK |= (1 << INT0)|(1 << INT1); // Enable INT0 interrupt
+
+	EICRA &= ~(1 << ISC00); // set rising edge trigger for external interrupts
+	EICRA |= (1 << ISC01);
+	EICRA &= ~(1 << ISC10);
+	EICRA |= (1 << ISC11);
+	
+	// Enable global interrupts
+	sei();
+}
+
+int main(void)
+{
+	I2C_Init();
+	MPU6050_Init();
+	initSerial();
+	ADC_Init();
+	interr_init();
+	Control=WAITING;
+	
+	while(1)
+	{
+		
+		switch (Control) {
+			case GESTURAL:
+			Gestual_Ctrl();
+			break;
+			case MANUAL:
+			Manual_Ctrl();
+			break;
+			case WAITING:
+			//do not transmit;
+			
+			break;
+			default:
+			//serialPrint("waiting for sense");
+			break;
+		}
+		_delay_ms(500);
+		
+	}
+	
+}
+
+
+ISR(INT0_vect)
+{
+	_delay_ms(10);
+	//signal to GESTURAL CONTROL
+	//serialPrint("Gestual\n");
+	Control=GESTURAL;
+}
+
+ISR(INT1_vect)
+{
+	_delay_ms(10);
+	//signal to MANUAL CONTROL
+	//serialPrint("Manual\n");
+	Control=MANUAL;
+}
